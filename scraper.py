@@ -1,0 +1,86 @@
+'''Gently scrapes earthquake events from USGS website'''
+import pandas as pd
+import os
+import urllib2
+import time
+import random
+from glob import glob
+
+BASE_URL = '''http://earthquake.usgs.gov/fdsnws/event/1/query?
+starttime={:s}+00%3A00%3A00&endtime={:s}+23%3A59%3A59
+&minmagnitude=0&maxmagnitude=&mindepth=&maxdepth=
+&maxlatitude=&minlongitude=&maxlongitude=
+&minlatitude=&latitude=&longitude=&minradiuskm=
+&maxradiuskm=&mingap=&maxgap=&reviewstatus=&eventtype=
+&minsig=&maxsig=&alertlevel=&minmmi=&maxmmi=&mincdi=
+&maxcdi=&minfelt=&catalog=&contributor=&producttype=
+&format=csv&kmlcolorby=age&callback=&orderby=time
+&limit=&offset='''
+
+BASE_URL = ''.join(BASE_URL.split('\n'))
+PD_TO_DATESTR = lambda x: x.date().strftime('%Y-%m-%d')
+
+
+def date_after(date_string, days=180):
+    '''returns relative date after months specified'''
+    date_string = pd.to_datetime(date_string)
+    return date_string + pd.to_timedelta(days, unit='D')
+
+
+def read_data(source, engine='c'):
+    '''reads csv source, converts 'time' column
+    and return data'''
+    data = pd.read_csv(source, parse_dates=['time'], engine=engine)
+    return data
+
+
+def get_data(data, url, engine='c'):
+    '''does the dirty work of appending data'''
+    if data is not None and isinstance(data, pd.DataFrame) and not data.empty:
+        data = data.append(read_data(url, engine))
+    else:
+        data = read_data(url, engine)
+    return data
+
+
+PRESENT_DATES = []
+FILE_LIST = glob('*.csv')
+if len(FILE_LIST):
+    for d in FILE_LIST:
+        PRESENT_DATES.append(pd.read_csv(d))
+    PRESENT_DATES = pd.concat(PRESENT_DATES, ignore_index=True)
+    PRESENT_DATES = PRESENT_DATES['time'].map(lambda x: str(x)[:10]).unique()
+
+DAYS = 180 # gap between two dates; to not hit the 20K event limit
+START_DATE = raw_input('''We need a start date in YYYY-MM-DD format.
+If you want to continue from last date in the data, just hit Enter: ''') \
+    or PD_TO_DATESTR(hi)
+INTERVALS = int(raw_input("Get data for how many years ? ")) * \
+    365/DAYS or 36  # years
+
+
+
+# run loop for 200 INTERVALS; each interval is 6 months
+# so a century worth of DATA :D
+while INTERVALS:
+    END_DATE = PD_TO_DATESTR(date_after(START_DATE, days=DAYS))
+    if END_DATE not in PRESENT_DATES or START_DATE not in PRESENT_DATES:
+        UPDATED_URL = BASE_URL.format(START_DATE, END_DATE)
+        print "{:s} TO {:s}".format(START_DATE, END_DATE)
+        try:
+            DATA = read_data(UPDATED_URL, engine='c')
+        except pd.parser.CParserError, error:
+            print "\t ", error
+            print "\t  trying with python engine"
+            DATA = read_data(UPDATED_URL, engine='python')
+        except urllib2.HTTPError, error:
+            print "\t ", error
+        finally:
+            filename = "{:s}_{:s}.csv".format(START_DATE, END_DATE)
+            DATA.to_csv(filename, index=False)
+    else:
+        print "Already present: {:s} TO {:s}".format(START_DATE, END_DATE)
+
+    START_DATE = END_DATE
+    INTERVALS -= 1
+    #time.sleep(random.randint(1, 10))
