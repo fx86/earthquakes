@@ -6,6 +6,8 @@ import time
 import random
 from glob import glob
 
+DAYS = 365 # gap between two dates; to not hit the 20K event limit
+
 BASE_URL = '''http://earthquake.usgs.gov/fdsnws/event/1/query?
 starttime={:s}+00%3A00%3A00&endtime={:s}+23%3A59%3A59
 &minmagnitude=0&maxmagnitude=&mindepth=&maxdepth=
@@ -47,16 +49,18 @@ PRESENT_DATES = []
 FILE_LIST = glob('*.csv')
 if len(FILE_LIST):
     for d in FILE_LIST:
-        PRESENT_DATES.append(pd.read_csv(d))
+        try:
+            PRESENT_DATES.append(pd.read_csv(d))
+        except ValueError:
+            os.remove(d)
     PRESENT_DATES = pd.concat(PRESENT_DATES, ignore_index=True)
     PRESENT_DATES = PRESENT_DATES['time'].map(lambda x: str(x)[:10]).unique()
 
-DAYS = 180 # gap between two dates; to not hit the 20K event limit
 START_DATE = raw_input('''We need a start date in YYYY-MM-DD format.
 If you want to continue from last date in the data, just hit Enter: ''') \
-    or PD_TO_DATESTR(hi)
-INTERVALS = int(raw_input("Get data for how many years ? ")) * \
-    365/DAYS or 36  # years
+    or max(PRESENT_DATES)
+INTERVALS = int((raw_input("Get data for how many years ? ") \
+     or 5) * 365.0/DAYS)  # years
 
 
 
