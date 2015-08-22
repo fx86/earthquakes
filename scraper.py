@@ -6,7 +6,9 @@ import time
 import random
 from glob import glob
 
-DAYS = 365 # gap between two dates; to not hit the 20K event limit
+# gap between two dates; to not hit the 20K event limit
+# this can be set to a max value of 365
+DAYS = 180
 
 BASE_URL = '''http://earthquake.usgs.gov/fdsnws/event/1/query?
 starttime={:s}+00%3A00%3A00&endtime={:s}+23%3A59%3A59
@@ -46,26 +48,25 @@ def get_data(data, url, engine='c'):
 
 
 PRESENT_DATES = []
-FILE_LIST = glob('*.csv')
-if len(FILE_LIST):
-    for d in FILE_LIST:
-        try:
-            PRESENT_DATES.append(pd.read_csv(d))
-        except ValueError:
-            os.remove(d)
-    PRESENT_DATES = pd.concat(PRESENT_DATES, ignore_index=True)
-    PRESENT_DATES = PRESENT_DATES['time'].map(lambda x: str(x)[:10]).unique()
 
 START_DATE = raw_input('''We need a start date in YYYY-MM-DD format.
-If you want to continue from last date in the data, just hit Enter: ''') \
-    or max(PRESENT_DATES)
+If you want to continue from last date in the data, just hit Enter: ''')
+if START_DATE == '':
+    FILE_LIST = glob('*.csv')
+    if len(FILE_LIST):
+        for d in FILE_LIST:
+            try:
+                PRESENT_DATES.append(pd.read_csv(d))
+            except ValueError:
+                os.remove(d)
+        PRESENT_DATES = pd.concat(PRESENT_DATES, ignore_index=True)
+        PRESENT_DATES = PRESENT_DATES['time'].map(lambda x: str(x)[:10]).unique()
+    START_DATE = max(PRESENT_DATES) or '1900-01-01'
 INTERVALS = int((raw_input("Get data for how many years ? ") \
-     or 5) * 365.0/DAYS)  # years
+     or 1) * 365.0/DAYS)  # years
 
 
 
-# run loop for 200 INTERVALS; each interval is 6 months
-# so a century worth of DATA :D
 while INTERVALS:
     END_DATE = PD_TO_DATESTR(date_after(START_DATE, days=DAYS))
     if END_DATE not in PRESENT_DATES or START_DATE not in PRESENT_DATES:
@@ -79,6 +80,9 @@ while INTERVALS:
             DATA = read_data(UPDATED_URL, engine='python')
         except urllib2.HTTPError, error:
             print "\t ", error
+            print "\n\nPlease set DAYS parameter in the script to a lower number."
+            print "USGS does not return more than 20 thousand events per request."
+            os._exit(0)
         finally:
             filename = "{:s}_{:s}.csv".format(START_DATE, END_DATE)
             DATA.to_csv(filename, index=False)
