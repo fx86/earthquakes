@@ -1,14 +1,13 @@
 '''Gently scrapes earthquake events from USGS website'''
 import pandas as pd
 import os
-import urllib2
 import time
 import random
 from glob import glob
 
-# gap between two dates; to not hit the 20K event limit
-# this can be set to a max value of 365
-DAYS = 180
+# scraper uses the DAYS variable as interval generator
+# It tries to get earthquake events between these dates.
+DAYS = 30
 
 BASE_URL = '''http://earthquake.usgs.gov/fdsnws/event/1/query?
 starttime={:s}+00%3A00%3A00&endtime={:s}+23%3A59%3A59
@@ -22,7 +21,9 @@ starttime={:s}+00%3A00%3A00&endtime={:s}+23%3A59%3A59
 &limit=&offset='''
 
 BASE_URL = ''.join(BASE_URL.split('\n'))
-PD_TO_DATESTR = lambda x: x.date().strftime('%Y-%m-%d')
+
+
+def PD_TO_DATESTR(x): return x.date().strftime('%Y-%m-%d')
 
 
 def date_after(date_string, days=180):
@@ -47,48 +48,49 @@ def get_data(data, url, engine='c'):
     return data
 
 
-PRESENT_DATES = []
+if __name__ == '__main__':
+    PRESENT_DATES = []
 
-START_DATE = raw_input('''We need a start date in YYYY-MM-DD format.
-If you want to continue from last date in the data, just hit Enter: ''')
-if START_DATE == '':
-    FILE_LIST = glob('*.csv')
-    if len(FILE_LIST):
-        for d in FILE_LIST:
+    START_DATE = input('''We need a start date in YYYY-MM-DD format.
+    If you want to continue from last date in the data, just hit Enter: ''')
+    if START_DATE == '':
+        FILE_LIST = glob('*.csv')
+        if len(FILE_LIST):
+            for d in FILE_LIST:
+                try:
+                    PRESENT_DATES.append(pd.read_csv(d))
+                except ValueError:
+                    os.remove(d)
+            PRESENT_DATES = pd.concat(PRESENT_DATES, ignore_index=True)
+            PRESENT_DATES = PRESENT_DATES['time'].map(
+                lambda x: str(x)[:10]).unique()
+        START_DATE = max(PRESENT_DATES) or '1900-01-01'
+    INTERVALS = int(float(input("How many years do you want to get data for ? ")
+                     or 1) * 365.0/DAYS)  # years
+
+    while INTERVALS:
+        END_DATE = PD_TO_DATESTR(date_after(START_DATE, days=DAYS))
+        if END_DATE not in PRESENT_DATES or START_DATE not in PRESENT_DATES:
+            UPDATED_URL = BASE_URL.format(START_DATE, END_DATE)
+            print("{:s} TO {:s}".format(START_DATE, END_DATE))
             try:
-                PRESENT_DATES.append(pd.read_csv(d))
-            except ValueError:
-                os.remove(d)
-        PRESENT_DATES = pd.concat(PRESENT_DATES, ignore_index=True)
-        PRESENT_DATES = PRESENT_DATES['time'].map(lambda x: str(x)[:10]).unique()
-    START_DATE = max(PRESENT_DATES) or '1900-01-01'
-INTERVALS = int((raw_input("Get data for how many years ? ") \
-     or 1) * 365.0/DAYS)  # years
+                print(UPDATED_URL)
+                DATA = read_data(UPDATED_URL, engine='c')
+            except pd.errors.ParserError as error:
+                print("\t ", error)
+                print("\t  trying with python engine")
+                DATA = read_data(UPDATED_URL, engine='python')
+            # except urllib2.HTTPError as error:
+            #     print("\t ", error)
+            #     print("\n\nPlease set DAYS parameter in the script to a lower number.")
+            #     print("USGS does not return more than 20 thousand events per request.")
+            #     os._exit(0)
+            finally:
+                filename = "{:s}_{:s}.csv".format(START_DATE, END_DATE)
+                DATA.to_csv(filename, index=False)
+        else:
+            print("Already present: {:s} TO {:s}".format(START_DATE, END_DATE))
 
-
-
-while INTERVALS:
-    END_DATE = PD_TO_DATESTR(date_after(START_DATE, days=DAYS))
-    if END_DATE not in PRESENT_DATES or START_DATE not in PRESENT_DATES:
-        UPDATED_URL = BASE_URL.format(START_DATE, END_DATE)
-        print "{:s} TO {:s}".format(START_DATE, END_DATE)
-        try:
-            DATA = read_data(UPDATED_URL, engine='c')
-        except pd.parser.CParserError, error:
-            print "\t ", error
-            print "\t  trying with python engine"
-            DATA = read_data(UPDATED_URL, engine='python')
-        except urllib2.HTTPError, error:
-            print "\t ", error
-            print "\n\nPlease set DAYS parameter in the script to a lower number."
-            print "USGS does not return more than 20 thousand events per request."
-            os._exit(0)
-        finally:
-            filename = "{:s}_{:s}.csv".format(START_DATE, END_DATE)
-            DATA.to_csv(filename, index=False)
-    else:
-        print "Already present: {:s} TO {:s}".format(START_DATE, END_DATE)
-
-    START_DATE = END_DATE
-    INTERVALS -= 1
-    #time.sleep(random.randint(1, 10))
+        START_DATE = END_DATE
+        INTERVALS -= 1
+        #time.sleep(random.randint(1, 10))
