@@ -22,17 +22,16 @@ A hit scale can be defined as: (for a selected time period)
 
 hit = richter scale * population density * quantity of earthquakes 
 
-## Worst hit over time
+## Let's look at worst hit countries
+
+This section can answer questions like:
 
 - How has this area affected over time ?
 - Has this caused people to move out of the country ?
 - How did it affect economy ?
-
-## Let's look at worst hit countries
-
-- How many earthquakes does this country see in a day, on average ?   _sure_
-- Which were the worst among these and when did they occur ?          _sure_
-- What might have caused the earthquake ?                             _maybe_
+- How many earthquakes does this country see in a day, on average ?
+- Which were the worst among these and when did they occur ?
+- What might have caused the earthquake ?
 
 ## Sidenotes
 
