@@ -1,2 +1,5 @@
 *.csv filter=lfs diff=lfs merge=lfs -text
 *.7z filter=lfs diff=lfs merge=lfs -text
+earthquakes.data/countries-continents.csv filter=lfs diff=lfs merge=lfs -text
+earthquakes.data/seismic_networks.csv filter=lfs diff=lfs merge=lfs -text
+earthquakes.data/all_earthquakes.csv filter=lfs diff=lfs merge=lfs -text
