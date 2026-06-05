@@ -17,6 +17,20 @@ def color_for_magnitude(magnitude):
     return [60, 140, 210, 170]
 
 
+def extract_country(place):
+    if pd.isna(place):
+        return "Unknown"
+
+    place_text = str(place).strip()
+    if not place_text:
+        return "Unknown"
+
+    if "," in place_text:
+        return place_text.split(",")[-1].strip()
+
+    return place_text
+
+
 @st.cache_data
 def load_data(file_path):
     data = pd.read_csv(file_path, low_memory=False)
@@ -29,6 +43,7 @@ def load_data(file_path):
     data = data.dropna(subset=["time", "latitude", "longitude"])
     data["date"] = data["time"].dt.date
     data["year"] = data["time"].dt.year
+    data["country"] = data["place"].apply(extract_country) if "place" in data.columns else "Unknown"
     return data
 
 
@@ -61,6 +76,46 @@ def build_earthquake_layer(data):
     )
 
 
+def get_zoom_from_span(span):
+    if span > 120:
+        return 1
+    if span > 60:
+        return 2
+    if span > 30:
+        return 3
+    if span > 15:
+        return 4
+    if span > 8:
+        return 5
+    if span > 4:
+        return 6
+    if span > 2:
+        return 7
+    return 8
+
+
+def build_view_state(data):
+    lat_min = float(data["latitude"].min())
+    lat_max = float(data["latitude"].max())
+    lon_min = float(data["longitude"].min())
+    lon_max = float(data["longitude"].max())
+
+    lat_span = abs(lat_max - lat_min)
+    lon_span = abs(lon_max - lon_min)
+    span = max(lat_span, lon_span)
+
+    zoom = get_zoom_from_span(span)
+
+    return pdk.ViewState(
+        latitude=float(data["latitude"].mean()),
+        longitude=float(data["longitude"].mean()),
+        zoom=zoom,
+        min_zoom=1,
+        max_zoom=12,
+        pitch=20,
+    )
+
+
 def main():
     st.set_page_config(page_title="Earthquake Explorer", page_icon="🌍", layout="wide")
     st.markdown(
@@ -82,7 +137,6 @@ def main():
         st.error("Could not find all-earthquakes.csv or all_earthquakes.csv. Run the scraper first.")
         return
 
-    import pdb; pdb.set_trace()  # Debugging breakpoint
     if data.empty:
         st.warning("No earthquake records found in the source CSV file.")
         return
@@ -90,7 +144,7 @@ def main():
     min_year = int(data["year"].min())
     max_year = int(data["year"].max())
 
-    control_col1, control_col2 = st.columns([1.2, 1.8])
+    control_col1, control_col2 = st.columns([1.8, 1.2])
     with control_col1:
         if min_year == max_year:
             st.caption(f"Year range: {min_year}")
@@ -112,32 +166,21 @@ def main():
         st.warning("No earthquake records found for the selected year range.")
         return
 
-    min_date = year_filtered["date"].min()
-    max_date = year_filtered["date"].max()
+    time_filtered = year_filtered.copy()
 
     with control_col2:
-        if min_date == max_date:
-            st.caption(f"Date range: {min_date}")
-            selected_dates = (min_date, max_date)
-        else:
-            selected_dates = st.date_input(
-                "Date range",
-                value=(min_date, max_date),
-                min_value=min_date,
-                max_value=max_date,
-            )
+        country_options = sorted(time_filtered["country"].dropna().unique().tolist())
+        selected_countries = st.multiselect(
+            "Country",
+            options=country_options,
+            default=[],
+            placeholder="All countries",
+        )
 
-    if isinstance(selected_dates, (tuple, list)) and len(selected_dates) == 2:
-        start_date, end_date = selected_dates
+    if selected_countries:
+        filtered = time_filtered[time_filtered["country"].isin(selected_countries)].copy()
     else:
-        start_date = selected_dates
-        end_date = selected_dates
-
-    if start_date > end_date:
-        st.error("Start date must be before or equal to end date.")
-        return
-
-    filtered = year_filtered[year_filtered["date"].between(start_date, end_date)].copy()
+        filtered = time_filtered
 
     st.subheader("Earthquake Stats")
     col1, col2, col3, col4, col5, col6 = st.columns(6)
@@ -148,19 +191,26 @@ def main():
     col5.metric("Median magnitude", f"{filtered['mag'].median():.2f}" if not filtered.empty else "N/A")
     col6.metric("Max depth (km)", f"{filtered['depth'].max():.1f}" if not filtered.empty else "N/A")
 
+    st.subheader("Earthquake Timeline")
+    year_span = selected_year_range[1] - selected_year_range[0]
+    if year_span <= 20:
+        timeline = (
+            filtered.set_index("time")
+            .resample("MS")
+            .size()
+            .rename("earthquake_count")
+        )
+    else:
+        timeline = filtered.groupby("year").size().rename("earthquake_count")
+
+    st.bar_chart(timeline)
+
     st.subheader("Earthquakes Map")
     if filtered.empty:
-        st.info("No earthquakes found in the selected date range.")
+        st.info("No earthquakes found in the selected filters.")
     else:
         layer = build_earthquake_layer(filtered)
-        view_state = pdk.ViewState(
-            latitude=float(filtered["latitude"].mean()),
-            longitude=float(filtered["longitude"].mean()),
-            zoom=1,
-            min_zoom=1,
-            max_zoom=10,
-            pitch=20,
-        )
+        view_state = build_view_state(filtered)
 
         deck = pdk.Deck(
             map_style="mapbox://styles/mapbox/light-v10",
