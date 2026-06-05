@@ -1,7 +1,10 @@
 """Gently scrapes earthquake events from the USGS API in date intervals."""
 
 import argparse
+from pathlib import Path
 import re
+import shutil
+import subprocess
 import time
 from glob import glob
 from urllib.error import HTTPError, URLError
@@ -14,6 +17,7 @@ DAYS = 30
 BASE_URL = "https://earthquake.usgs.gov/fdsnws/event/1/query"
 RANGE_FILE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})\.csv$")
 MASTER_FILE = "all_earthquakes.csv"
+ARCHIVE_FILE = "earthquakes_data_USGS.7z"
 DEFAULT_START_DATE = "1900-01-01"
 MAX_RETRIES = 4
 RETRY_WAIT_SECONDS = 3
@@ -134,15 +138,41 @@ def rebuild_master_file():
             interval_files.append(path)
 
     if not interval_files:
-        return
+        print("No interval CSV files found. Skipping master rebuild.")
+        return []
 
     frames = [read_data(path) for path in interval_files]
     merged = pd.concat(frames, ignore_index=True)
     merged = deduplicate_data(merged)
     if "time" in merged.columns:
+        merged["time"] = pd.to_datetime(merged["time"], errors="coerce", utc=True)
         merged = merged.sort_values(by="time")
     merged.to_csv(MASTER_FILE, index=False)
     print(f"Updated {MASTER_FILE} with {len(merged)} rows from {len(interval_files)} interval files.")
+    return interval_files
+
+
+def build_archive(files_to_pack=None):
+    """Create a .7z archive containing the merged master CSV."""
+    del files_to_pack  # Kept for backward compatibility with existing call sites.
+
+    files = [MASTER_FILE] if any(path == MASTER_FILE for path in glob(MASTER_FILE)) else []
+    if not files:
+        print(f"{MASTER_FILE} not found; skipping archive generation.")
+        return
+
+    seven_zip_bin = shutil.which("7z")
+    if not seven_zip_bin:
+        print("7z CLI not found; skipping archive generation.")
+        return
+
+    archive_path = Path(ARCHIVE_FILE)
+    if archive_path.exists():
+        archive_path.unlink()
+
+    command = [seven_zip_bin, "a", "-t7z", ARCHIVE_FILE] + files
+    subprocess.run(command, check=True)
+    print(f"Created archive: {ARCHIVE_FILE} ({len(files)} files)")
 
 
 def parse_args():
@@ -157,6 +187,11 @@ def parse_args():
         type=str,
         default=None,
         help="Start date in YYYY-MM-DD format. Overrides resume behavior.",
+    )
+    parser.add_argument(
+        "--use-cache",
+        action="store_true",
+        help="Use existing interval CSV files only; skip API fetching and rebuild outputs from cache.",
     )
     return parser.parse_args()
 
@@ -177,6 +212,13 @@ def determine_start_date(args, existing_ranges):
 def run_scraper():
     args = parse_args()
     existing_ranges = discover_existing_ranges()
+
+    if args.use_cache:
+        print("Using cache only. Skipping API fetch and rebuilding output files.")
+        interval_files = rebuild_master_file()
+        build_archive(interval_files)
+        return
+
     start_date = determine_start_date(args, existing_ranges)
     target_date = pd.Timestamp.utcnow().date().strftime("%Y-%m-%d")
 
@@ -204,7 +246,8 @@ def run_scraper():
 
         start_date = end_date
 
-    rebuild_master_file()
+    interval_files = rebuild_master_file()
+    build_archive(interval_files)
 
 
 if __name__ == "__main__":
