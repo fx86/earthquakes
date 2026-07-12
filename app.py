@@ -144,7 +144,7 @@ def main():
     min_year = int(data["year"].min())
     max_year = int(data["year"].max())
 
-    control_col1, control_col2 = st.columns([1.8, 1.2])
+    control_col1, control_col2, control_col3, control_col4, control_col5 = st.columns([1.6, 1.2, 1.0, 1.0, 1.0])
     with control_col1:
         if min_year == max_year:
             st.caption(f"Year range: {min_year}")
@@ -166,9 +166,30 @@ def main():
         st.warning("No earthquake records found for the selected year range.")
         return
 
-    time_filtered = year_filtered.copy()
+    min_date = year_filtered["date"].min()
+    max_date = year_filtered["date"].max()
 
     with control_col2:
+        selected_dates = st.date_input(
+            "Date range",
+            value=(min_date, max_date),
+            min_value=min_date,
+            max_value=max_date,
+        )
+
+    if isinstance(selected_dates, tuple) and len(selected_dates) == 2:
+        start_date, end_date = selected_dates
+        time_filtered = year_filtered[
+            year_filtered["date"].between(start_date, end_date)
+        ].copy()
+    else:
+        time_filtered = year_filtered.copy()
+
+    if time_filtered.empty:
+        st.warning("No earthquake records found for the selected date range.")
+        return
+
+    with control_col3:
         country_options = sorted(time_filtered["country"].dropna().unique().tolist())
         selected_countries = st.multiselect(
             "Country",
@@ -178,9 +199,37 @@ def main():
         )
 
     if selected_countries:
-        filtered = time_filtered[time_filtered["country"].isin(selected_countries)].copy()
+        country_filtered = time_filtered[time_filtered["country"].isin(selected_countries)].copy()
     else:
-        filtered = time_filtered
+        country_filtered = time_filtered
+
+    with control_col4:
+        place_options = sorted(country_filtered["place"].dropna().unique().tolist()) if "place" in country_filtered.columns else []
+        selected_places = st.multiselect(
+            "Place",
+            options=place_options,
+            default=[],
+            placeholder="All places",
+        )
+
+    if selected_places:
+        place_filtered = country_filtered[country_filtered["place"].isin(selected_places)].copy()
+    else:
+        place_filtered = country_filtered
+
+    with control_col5:
+        mag_type_options = sorted(place_filtered["magType"].dropna().unique().tolist()) if "magType" in place_filtered.columns else []
+        selected_mag_types = st.multiselect(
+            "Magnitude type",
+            options=mag_type_options,
+            default=[],
+            placeholder="All types",
+        )
+
+    if selected_mag_types:
+        filtered = place_filtered[place_filtered["magType"].isin(selected_mag_types)].copy()
+    else:
+        filtered = place_filtered
 
     st.subheader("Earthquake Stats")
     col1, col2, col3, col4, col5, col6 = st.columns(6)
@@ -192,18 +241,33 @@ def main():
     col6.metric("Max depth (km)", f"{filtered['depth'].max():.1f}" if not filtered.empty else "N/A")
 
     st.subheader("Earthquake Timeline")
+    # Buckets ordered lightest -> heaviest so the heaviest stack on top.
+    magnitude_bins = [-float("inf"), 2, 4, 6, 8, float("inf")]
+    magnitude_labels = ["0–2", "2–4", "4–6", "6–8", "8+"]
+    magnitude_colors = ["#fee5d9", "#fcae91", "#fb6a4a", "#de2d26", "#a50f15"]
+
+    timeline_data = filtered.copy()
+    timeline_data["mag_bucket"] = pd.cut(
+        timeline_data["mag"], bins=magnitude_bins, labels=magnitude_labels
+    )
+
     year_span = selected_year_range[1] - selected_year_range[0]
     if year_span <= 20:
         timeline = (
-            filtered.set_index("time")
-            .resample("MS")
+            timeline_data.set_index("time")
+            .groupby([pd.Grouper(freq="MS"), "mag_bucket"], observed=False)
             .size()
-            .rename("earthquake_count")
+            .unstack("mag_bucket")
         )
     else:
-        timeline = filtered.groupby("year").size().rename("earthquake_count")
+        timeline = (
+            timeline_data.groupby(["year", "mag_bucket"], observed=False)
+            .size()
+            .unstack("mag_bucket")
+        )
 
-    st.bar_chart(timeline)
+    timeline = timeline.reindex(columns=magnitude_labels, fill_value=0)
+    st.bar_chart(timeline, color=magnitude_colors)
 
     st.subheader("Earthquakes Map")
     if filtered.empty:
