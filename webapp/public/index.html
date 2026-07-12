@@ -11,11 +11,36 @@
     #status { margin-top: 1rem; color: #aaa; min-height: 1.2em; }
     #now { margin-top: 0.5rem; font-variant-numeric: tabular-nums; }
     .mag { color: #fb6a4a; font-weight: 600; }
+    #instruments { margin: 1.2rem 0; padding: 1rem; border: 1px solid #333; border-radius: 8px; }
+    #instruments legend { padding: 0 0.5rem; color: #aaa; font-size: 0.9rem; }
+    .bucket-row { display: flex; align-items: center; gap: 0.8rem; margin: 0.4rem 0; }
+    .bucket-row label { width: 6.5rem; font-variant-numeric: tabular-nums; }
+    .bucket-row select { background: #222; color: #eee; border: 1px solid #444; border-radius: 4px; padding: 0.3rem 0.5rem; font-size: 0.95rem; }
+    .bucket-row .test { background: #333; color: #eee; padding: 0.25rem 0.7rem; font-size: 0.85rem; }
+    details { margin: 1rem 0; border: 1px solid #333; border-radius: 8px; padding: 0.6rem 1rem; }
+    details summary { cursor: pointer; color: #aaa; font-size: 0.9rem; }
+    .slider-row { display: flex; align-items: center; gap: 0.8rem; margin: 0.6rem 0; }
+    .slider-row label { width: 10rem; font-variant-numeric: tabular-nums; }
+    .slider-row input[type="range"] { flex: 1; accent-color: #de2d26; }
   </style>
 </head>
 <body>
   <h1>Earthquake Soundtrack</h1>
   <p>Each quake is a note: depth &rarr; pitch (deeper = lower), magnitude &rarr; loudness &amp; length, longitude &rarr; stereo pan.</p>
+  <fieldset id="instruments">
+    <legend>Instrument per Richter range</legend>
+  </fieldset>
+  <details id="settings">
+    <summary>Sound preview settings</summary>
+    <div class="slider-row">
+      <label>Magnitude: <span id="prevMagVal">7.5</span></label>
+      <input type="range" id="prevMag" min="6.5" max="9.2" step="0.1" value="7.5" />
+    </div>
+    <div class="slider-row">
+      <label>Depth: <span id="prevDepthVal">100</span> km</label>
+      <input type="range" id="prevDepth" min="0" max="700" step="10" value="100" />
+    </div>
+  </details>
   <button id="play">Play</button>
   <button id="stop" disabled>Stop</button>
   <div id="status">Loading data&hellip;</div>

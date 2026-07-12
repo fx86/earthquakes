@@ -12,6 +12,7 @@ const MIME = {
   ".js": "text/javascript",
   ".css": "text/css",
   ".json": "application/json",
+  ".wav": "audio/wav",
 };
 
 const server = http.createServer((req, res) => {

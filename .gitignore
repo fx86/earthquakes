@@ -3,5 +3,8 @@
 !package.json
 !package-lock.json
 *.ipynb*
+*.mid
+node_modules/
+__pycache__/
 
 .DS_Store
