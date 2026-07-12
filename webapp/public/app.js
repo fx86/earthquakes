@@ -1,6 +1,24 @@
 /* global Tone */
 const TOTAL_SECONDS = 240; // compress the full time range into ~4 minutes
-const SCALE = [36, 38, 41, 43, 46, 48, 50, 53, 55, 58, 60, 62, 65, 67, 70, 72, 74, 77, 79, 82]; // C minor pentatonic, 4 octaves
+
+// Chord progression in C minor: i - VI - III - VII, one chord per CHORD_SECONDS.
+// Every melodic note is quantized to the chord active at its moment, so overlapping
+// notes are always consonant and the piece has harmonic movement.
+const PROGRESSION = [
+  [0, 3, 7], // Cm
+  [8, 0, 3], // Ab
+  [3, 7, 10], // Eb
+  [10, 2, 5], // Bb
+];
+const CHORD_SECONDS = 10;
+const CHORD_OCTAVES = [2, 3, 4, 5];
+
+function chordPool(when) {
+  const chord = PROGRESSION[Math.floor(when / CHORD_SECONDS) % PROGRESSION.length];
+  const pool = [];
+  for (const oct of CHORD_OCTAVES) for (const pc of chord) pool.push(12 * (oct + 1) + pc);
+  return pool.sort((a, b) => a - b);
+}
 
 // Real CC0 drum recordings (VCSL) graded small -> huge, one per key.
 // Triggering the exact key plays the recording unpitched.
@@ -55,11 +73,16 @@ function taikoPitch(mag) {
 }
 
 // Shared mapping: quake features -> note parameters
-function noteFor(instrument, mag, depth) {
+// `when` (seconds into the piece) selects the active chord for melodic instruments
+function noteFor(instrument, mag, depth, when = 0) {
   const depthNorm = Math.min(depth, 700) / 700;
-  const midi = instrument === "Taiko drums"
-    ? taikoPitch(mag)
-    : SCALE[Math.round((1 - depthNorm) * (SCALE.length - 1))];
+  let midi;
+  if (instrument === "Taiko drums") {
+    midi = taikoPitch(mag);
+  } else {
+    const pool = chordPool(when);
+    midi = pool[Math.round((1 - depthNorm) * (pool.length - 1))];
+  }
   const velocity = Math.min(1, 0.2 + ((mag - 5) / 4) * 0.8);
   const duration = 0.3 + (mag - 5) * 0.8;
   return { midi, velocity, duration };
@@ -157,47 +180,73 @@ function disposeSynths() {
   activeSynths = [];
 }
 
+const CROSSFADE = 3; // seconds each bucket track fades in/out
+
 async function play() {
   await Tone.start();
   Tone.getTransport().cancel();
   disposeSynths();
 
-  const panner = new Tone.Panner(0).toDestination();
-  activeSynths.push(panner);
-
-  // One synth per bucket, based on the current dropdown choices
-  const bucketSynths = BUCKETS.map((bucket) => {
-    const synth = INSTRUMENTS[bucket.instrument]();
-    if (synth.maxPolyphony !== undefined) synth.maxPolyphony = 48;
-    synth.connect(panner);
-    activeSynths.push(synth);
-    return synth;
-  });
-
-  const synthFor = (mag) => {
-    const idx = BUCKETS.findIndex((b) => mag < b.max);
-    return { synth: bucketSynths[idx], instrument: BUCKETS[idx].instrument };
-  };
-
-  statusEl.textContent = "Loading samples…";
-  await Tone.loaded();
-
   const t0 = quakes[0].t;
   const t1 = quakes[quakes.length - 1].t;
 
+  // 1. Build the note sequence for each magnitude bucket first
+  const sequences = BUCKETS.map(() => []);
   for (const q of quakes) {
+    const idx = BUCKETS.findIndex((b) => q.mag < b.max);
     const when = ((q.t - t0) / (t1 - t0)) * TOTAL_SECONDS;
-    const { synth, instrument } = synthFor(q.mag);
-    const { midi, velocity, duration } = noteFor(instrument, q.mag, q.depth);
-
-    Tone.getTransport().schedule((time) => {
-      panner.pan.setValueAtTime(Math.max(-1, Math.min(1, q.lon / 180)), time);
-      synth.triggerAttackRelease(midiToNote(midi), duration, time, velocity);
-      Tone.getDraw().schedule(() => {
-        nowEl.innerHTML = `<span class="mag">M${q.mag.toFixed(1)}</span> &mdash; ${q.place} (${new Date(q.t).toISOString().slice(0, 10)})`;
-      }, time);
-    }, when);
+    const { midi, velocity, duration } = noteFor(BUCKETS[idx].instrument, q.mag, q.depth, when);
+    sequences[idx].push({
+      time: when,
+      note: midiToNote(midi),
+      velocity,
+      duration,
+      pan: Math.max(-1, Math.min(1, q.lon / 180)),
+      mag: q.mag,
+      place: q.place,
+      t: q.t,
+    });
   }
+
+  // 2. One track per bucket: synth -> panner -> gain, crossfaded in/out at its first/last note
+  const parts = [];
+  BUCKETS.forEach((bucket, idx) => {
+    const events = sequences[idx];
+    if (!events.length) return;
+
+    const fader = new Tone.Gain(0).toDestination();
+    const panner = new Tone.Panner(0).connect(fader);
+    const synth = INSTRUMENTS[bucket.instrument]();
+    if (synth.maxPolyphony !== undefined) synth.maxPolyphony = 48;
+    synth.connect(panner);
+    activeSynths.push(synth, panner, fader);
+
+    const part = new Tone.Part((time, ev) => {
+      panner.pan.setValueAtTime(ev.pan, time);
+      synth.triggerAttackRelease(ev.note, ev.duration, time, ev.velocity);
+      Tone.getDraw().schedule(() => {
+        nowEl.innerHTML = `<span class="mag">M${ev.mag.toFixed(1)}</span> &mdash; ${ev.place} (${new Date(ev.t).toISOString().slice(0, 10)})`;
+      }, time);
+    }, events);
+    part.start(0);
+    parts.push(part);
+    activeSynths.push(part);
+
+    // Crossfade this track in at its first note and out after its last
+    const first = events[0].time;
+    const last = events[events.length - 1].time + events[events.length - 1].duration;
+    Tone.getTransport().schedule((time) => {
+      fader.gain.setValueAtTime(0, time);
+      fader.gain.linearRampToValueAtTime(1, time + CROSSFADE);
+    }, Math.max(0, first - 0.05));
+    Tone.getTransport().schedule((time) => {
+      fader.gain.setValueAtTime(1, time);
+      fader.gain.linearRampToValueAtTime(0, time + CROSSFADE);
+    }, Math.max(0, last - CROSSFADE));
+  });
+
+  statusEl.textContent = "Loading samples…";
+  await Tone.loaded();
 
   Tone.getTransport().schedule(() => stop(), TOTAL_SECONDS + 2);
   Tone.getTransport().start();
