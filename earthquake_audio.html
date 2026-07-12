@@ -110,31 +110,13 @@
 // ── data (first 500 rows, sampled from CSV) ──────────────────────────────────
 const DATA_URL = './earthquakes.data/all_earthquakes.csv'
 
-async function load_data() {
-  const resp = await fetch(DATA_URL)
-  const text = await resp.text()
-  const lines = text.trim().split('\n')
-  const headers = lines[0].split(',')
-  const idx = {
-    lat: headers.indexOf('latitude'),
-    lng: headers.indexOf('longitude'),
-    depth: headers.indexOf('depth'),
-    mag: headers.indexOf('mag'),
-    place: headers.indexOf('place'),
-    time: headers.indexOf('time'),
-  }
-  const rows = []
-  for(let i = 1; i < lines.length; i++) {
-    const cols = lines[i].split(',')
-    const lat = parseFloat(cols[idx.lat])
-    const lng = parseFloat(cols[idx.lng])
-    const depth = parseFloat(cols[idx.depth])
-    const mag = parseFloat(cols[idx.mag])
-    if(isNaN(lat) || isNaN(lng) || isNaN(depth) || isNaN(mag)) continue
-    rows.push({ lat, lng, depth, mag, place: cols[idx.place] || '', time: cols[idx.time] || '' })
-    if(rows.length >= 600) break
-  }
-  return rows
+async function load_data(n = 600) {
+  const raw = await d3.csv(DATA_URL, d => {
+    const lat = +d.latitude, lng = +d.longitude, depth = +d.depth, mag = +d.mag
+    if(isNaN(lat) || isNaN(lng) || isNaN(depth) || isNaN(mag)) return null
+    return { lat, lng, depth, mag, place: d.place || '', time: d.time || '' }
+  })
+  return raw.filter(Boolean).slice(0, n)
 }
 
 // ── d3 scales ────────────────────────────────────────────────────────────────
@@ -172,24 +154,23 @@ let eq_index = 0
 let earthquakes = []
 
 function build_audio_chain() {
-  // low-pass filter for depth
+  // low-pass filter controlled by depth
   filter = new Tone.Filter({ type: 'lowpass', frequency: 8000, rolloff: -24 })
 
-  // 3D panner for spatial positioning
-  panner3d = new Tone.Panner3D({
-    panningModel: 'HRTF',
-    distanceModel: 'inverse',
-    positionX: 0, positionY: 0, positionZ: 1,
-    rolloffFactor: 1,
-  })
+  // 3D panner — set position after construction (Tone v14 doesn't accept position in constructor)
+  panner3d = new Tone.Panner3D({ panningModel: 'HRTF', distanceModel: 'inverse', rolloffFactor: 1 })
+  panner3d.positionX.value = 0
+  panner3d.positionY.value = 0
+  panner3d.positionZ.value = 1
 
   // analyser for waveform viz
   analyser = new Tone.Analyser('waveform', 256)
 
-  // synth — PolySynth with a metallic/percussive tone
+  // PolySynth — limit voices to avoid stacking silence at high playback speeds
   synth = new Tone.PolySynth(Tone.Synth, {
+    maxPolyphony: 8,
     oscillator: { type: 'triangle' },
-    envelope: { attack: 0.01, decay: 0.2, sustain: 0.1, release: 0.5 },
+    envelope: { attack: 0.01, decay: 0.15, sustain: 0.05, release: 0.3 },
   })
 
   synth.connect(filter)
@@ -228,15 +209,17 @@ function play_earthquake(eq) {
   const freq_cutoff = scale_filter(eq.depth)
   const pan_x = scale_pan_x(eq.lng)
   const pan_y = scale_pan_y(eq.lat)
-  const gain = scale_gain(eq.mag)
   const dur = scale_dur(eq.mag)
+
+  // map mag to dB volume (-30 dB for tiny quakes, 0 dB for mag 9.6)
+  const vol_db = d3.scaleLinear().domain([0, 9.6]).range([-30, 0]).clamp(true)(eq.mag)
 
   filter.frequency.rampTo(freq_cutoff, 0.05)
   panner3d.positionX.rampTo(pan_x, 0.05)
   panner3d.positionY.rampTo(pan_y, 0.05)
-  panner3d.positionZ.value = 1
+  synth.volume.rampTo(vol_db, 0.05)
 
-  synth.triggerAttackRelease(note, dur, Tone.now(), gain)
+  synth.triggerAttackRelease(note, dur)
 
   // update UI
   document.getElementById('info-place').textContent = eq.place || '—'
@@ -322,7 +305,7 @@ document.getElementById('speed').addEventListener('input', function() {
 ;(async () => {
   document.getElementById('btn-play').textContent = '⏳ Loading…'
   document.getElementById('btn-play').disabled = true
-  earthquakes = await load_data()
+  earthquakes = await load_data(600)
   document.getElementById('btn-play').textContent = '▶ Play'
   document.getElementById('btn-play').disabled = false
   document.getElementById('eq-counter').textContent = `0 / ${earthquakes.length} events loaded`
