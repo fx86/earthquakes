@@ -1,0 +1,24 @@
+{
+  "name": "earthquakes",
+  "version": "1.0.0",
+  "description": "Collection of earthquake data and related analysis",
+  "homepage": "https://github.com/fx86/earthquakes#readme",
+  "bugs": {
+    "url": "https://github.com/fx86/earthquakes/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fx86/earthquakes.git"
+  },
+  "license": "ISC",
+  "author": "",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "d3": "^7.9.0",
+    "tone": "^15.1.22"
+  }
+}

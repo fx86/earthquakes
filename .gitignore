@@ -2,3 +2,6 @@
 *.ipynb*
 
 .DS_Store
+
+node_modules/
+.playwright-mcp/

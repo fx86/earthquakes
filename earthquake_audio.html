@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Earthquake Sonification</title>
+  <script src="https://cdn.jsdelivr.net/npm/tone@14/build/Tone.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0a0a0f;
+      color: #e0e0e0;
+      font-family: 'Courier New', monospace;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+      padding: 32px 16px;
+    }
+    h1 { font-size: 1.4rem; letter-spacing: 0.15em; color: #7dd3fc; margin-bottom: 4px; }
+    .subtitle { font-size: 0.75rem; color: #64748b; margin-bottom: 32px; letter-spacing: 0.08em; }
+
+    .controls {
+      display: flex; gap: 12px; align-items: center; margin-bottom: 28px; flex-wrap: wrap; justify-content: center;
+    }
+    button {
+      background: #1e293b; border: 1px solid #334155; color: #e0e0e0;
+      padding: 8px 20px; border-radius: 4px; cursor: pointer; font-family: inherit;
+      font-size: 0.85rem; letter-spacing: 0.05em; transition: background 0.15s;
+    }
+    button:hover { background: #334155; }
+    button.active { background: #0369a1; border-color: #0ea5e9; color: #fff; }
+    button:disabled { opacity: 0.3; cursor: not-allowed; }
+
+    .speed-row { display: flex; align-items: center; gap: 8px; font-size: 0.78rem; color: #94a3b8; }
+    input[type=range] { width: 100px; accent-color: #0ea5e9; }
+
+    .viz {
+      width: 100%; max-width: 860px;
+      background: #0f172a;
+      border: 1px solid #1e293b;
+      border-radius: 6px;
+      padding: 16px;
+      margin-bottom: 20px;
+    }
+    #waveform { width: 100%; height: 64px; }
+    #progress-bar-wrap {
+      width: 100%; height: 4px; background: #1e293b; border-radius: 2px; margin-top: 10px;
+    }
+    #progress-bar { height: 100%; width: 0%; background: #0ea5e9; border-radius: 2px; transition: width 0.3s; }
+
+    .info-grid {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
+      width: 100%; max-width: 860px; margin-bottom: 20px;
+    }
+    .info-card {
+      background: #0f172a; border: 1px solid #1e293b; border-radius: 6px;
+      padding: 12px 14px;
+    }
+    .info-card .label { font-size: 0.65rem; color: #475569; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 4px; }
+    .info-card .value { font-size: 1.1rem; color: #7dd3fc; }
+
+    .legend {
+      width: 100%; max-width: 860px;
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
+      font-size: 0.72rem; color: #64748b;
+    }
+    .legend-item { background: #0f172a; border: 1px solid #1e293b; border-radius: 4px; padding: 10px 12px; }
+    .legend-item strong { color: #94a3b8; display: block; margin-bottom: 3px; }
+
+    #eq-counter { font-size: 0.72rem; color: #475569; margin-top: 8px; }
+  </style>
+</head>
+<body>
+
+<h1>EARTHQUAKE SONIFICATION</h1>
+<p class="subtitle">lat/lng → 3D panner &nbsp;|&nbsp; depth → bass filter &nbsp;|&nbsp; magnitude → pitch</p>
+
+<div class="controls">
+  <button id="btn-play">&#9654; Play</button>
+  <button id="btn-pause" disabled>&#9646;&#9646; Pause</button>
+  <button id="btn-stop" disabled>&#9632; Stop</button>
+  <div class="speed-row">
+    Speed
+    <input type="range" id="speed" min="1" max="20" value="6">
+    <span id="speed-val">6</span> eq/s
+  </div>
+</div>
+
+<div class="viz">
+  <canvas id="waveform"></canvas>
+  <div id="progress-bar-wrap"><div id="progress-bar"></div></div>
+  <div id="eq-counter">— / —</div>
+</div>
+
+<div class="info-grid">
+  <div class="info-card"><div class="label">Place</div><div class="value" id="info-place">—</div></div>
+  <div class="info-card"><div class="label">Magnitude</div><div class="value" id="info-mag">—</div></div>
+  <div class="info-card"><div class="label">Depth (km)</div><div class="value" id="info-depth">—</div></div>
+  <div class="info-card"><div class="label">Time</div><div class="value" id="info-time">—</div></div>
+</div>
+
+<div class="legend">
+  <div class="legend-item"><strong>Pitch (mag)</strong>mag 0–9.6 → C2 to C6 (lower = soft rumble, higher = sharp strike)</div>
+  <div class="legend-item"><strong>3D Pan (lat/lng)</strong>lat → Y elevation, lng → X pan, giving spatial sense of quake location</div>
+  <div class="legend-item"><strong>Bass filter (depth)</strong>shallow quakes = open/bright, deep quakes = heavy low-pass filtering</div>
+</div>
+
+<script>
+// ── data (first 500 rows, sampled from CSV) ──────────────────────────────────
+const DATA_URL = './earthquakes.data/all_earthquakes.csv'
+
+async function load_data() {
+  const resp = await fetch(DATA_URL)
+  const text = await resp.text()
+  const lines = text.trim().split('\n')
+  const headers = lines[0].split(',')
+  const idx = {
+    lat: headers.indexOf('latitude'),
+    lng: headers.indexOf('longitude'),
+    depth: headers.indexOf('depth'),
+    mag: headers.indexOf('mag'),
+    place: headers.indexOf('place'),
+    time: headers.indexOf('time'),
+  }
+  const rows = []
+  for(let i = 1; i < lines.length; i++) {
+    const cols = lines[i].split(',')
+    const lat = parseFloat(cols[idx.lat])
+    const lng = parseFloat(cols[idx.lng])
+    const depth = parseFloat(cols[idx.depth])
+    const mag = parseFloat(cols[idx.mag])
+    if(isNaN(lat) || isNaN(lng) || isNaN(depth) || isNaN(mag)) continue
+    rows.push({ lat, lng, depth, mag, place: cols[idx.place] || '', time: cols[idx.time] || '' })
+    if(rows.length >= 600) break
+  }
+  return rows
+}
+
+// ── d3 scales ────────────────────────────────────────────────────────────────
+// mag 0..9.6 → midi note 36 (C2) .. 84 (C6)
+const scale_note = d3.scaleLinear().domain([0, 9.6]).range([36, 84]).clamp(true)
+
+// depth -10..735 → filter freq 300..8000 Hz (deep = more bass / lower cutoff)
+const scale_filter = d3.scaleLinear().domain([-10, 735]).range([8000, 200]).clamp(true)
+
+// lat -90..90 → panner3D elevation -45..45 deg (negative = south = below, north = above)
+const scale_pan_y = d3.scaleLinear().domain([-90, 90]).range([-45, 45]).clamp(true)
+
+// lng -180..180 → panner3D x position -1..1
+const scale_pan_x = d3.scaleLinear().domain([-180, 180]).range([-1, 1]).clamp(true)
+
+// mag → velocity/gain (louder for bigger quakes)
+const scale_gain = d3.scaleLinear().domain([0, 9.6]).range([0.05, 1.0]).clamp(true)
+
+// mag → note duration (bigger quake = longer sustain)
+const scale_dur = d3.scaleLinear().domain([0, 9.6]).range([0.08, 1.4]).clamp(true)
+
+// midi note number to Tone.js note string
+function midi_to_note(midi) {
+  const notes = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
+  const octave = Math.floor(midi / 12) - 1
+  const note = notes[midi % 12]
+  return `${note}${octave}`
+}
+
+// ── Tone.js setup ────────────────────────────────────────────────────────────
+let synth, filter, panner3d, analyser, waveform_data
+let playing = false, paused = false
+let interval_id = null
+let eq_index = 0
+let earthquakes = []
+
+function build_audio_chain() {
+  // low-pass filter for depth
+  filter = new Tone.Filter({ type: 'lowpass', frequency: 8000, rolloff: -24 })
+
+  // 3D panner for spatial positioning
+  panner3d = new Tone.Panner3D({
+    panningModel: 'HRTF',
+    distanceModel: 'inverse',
+    positionX: 0, positionY: 0, positionZ: 1,
+    rolloffFactor: 1,
+  })
+
+  // analyser for waveform viz
+  analyser = new Tone.Analyser('waveform', 256)
+
+  // synth — PolySynth with a metallic/percussive tone
+  synth = new Tone.PolySynth(Tone.Synth, {
+    oscillator: { type: 'triangle' },
+    envelope: { attack: 0.01, decay: 0.2, sustain: 0.1, release: 0.5 },
+  })
+
+  synth.connect(filter)
+  filter.connect(panner3d)
+  panner3d.connect(analyser)
+  analyser.connect(Tone.Destination)
+}
+
+// ── waveform canvas ──────────────────────────────────────────────────────────
+const canvas = document.getElementById('waveform')
+const ctx2d = canvas.getContext('2d')
+let anim_id = null
+
+function draw_waveform() {
+  anim_id = requestAnimationFrame(draw_waveform)
+  if(!analyser) return
+  const w = canvas.width = canvas.offsetWidth
+  const h = canvas.height = canvas.offsetHeight
+  const data = analyser.getValue()
+  ctx2d.clearRect(0, 0, w, h)
+  ctx2d.strokeStyle = '#0ea5e9'
+  ctx2d.lineWidth = 1.5
+  ctx2d.beginPath()
+  const slice = w / data.length
+  for(let i = 0; i < data.length; i++) {
+    const x = i * slice
+    const y = ((data[i] + 1) / 2) * h
+    i === 0 ? ctx2d.moveTo(x, y) : ctx2d.lineTo(x, y)
+  }
+  ctx2d.stroke()
+}
+
+// ── play one earthquake event ────────────────────────────────────────────────
+function play_earthquake(eq) {
+  const note = midi_to_note(Math.round(scale_note(eq.mag)))
+  const freq_cutoff = scale_filter(eq.depth)
+  const pan_x = scale_pan_x(eq.lng)
+  const pan_y = scale_pan_y(eq.lat)
+  const gain = scale_gain(eq.mag)
+  const dur = scale_dur(eq.mag)
+
+  filter.frequency.rampTo(freq_cutoff, 0.05)
+  panner3d.positionX.rampTo(pan_x, 0.05)
+  panner3d.positionY.rampTo(pan_y, 0.05)
+  panner3d.positionZ.value = 1
+
+  synth.triggerAttackRelease(note, dur, Tone.now(), gain)
+
+  // update UI
+  document.getElementById('info-place').textContent = eq.place || '—'
+  document.getElementById('info-mag').textContent = eq.mag.toFixed(2)
+  document.getElementById('info-depth').textContent = eq.depth.toFixed(1)
+  document.getElementById('info-time').textContent = (eq.time || '').split('.')[0]
+  document.getElementById('eq-counter').textContent =
+    `${eq_index} / ${earthquakes.length} events`
+  document.getElementById('progress-bar').style.width =
+    `${(eq_index / earthquakes.length) * 100}%`
+}
+
+// ── playback control ─────────────────────────────────────────────────────────
+function get_interval_ms() {
+  const speed = parseInt(document.getElementById('speed').value)
+  return Math.max(50, Math.floor(1000 / speed))
+}
+
+function start_interval() {
+  interval_id = setInterval(() => {
+    if(eq_index >= earthquakes.length) {
+      stop_playback(); return
+    }
+    play_earthquake(earthquakes[eq_index])
+    eq_index++
+  }, get_interval_ms())
+}
+
+async function start_playback() {
+  await Tone.start()
+  if(!synth) build_audio_chain()
+  eq_index = 0
+  playing = true; paused = false
+  document.getElementById('btn-play').disabled = true
+  document.getElementById('btn-play').classList.add('active')
+  document.getElementById('btn-pause').disabled = false
+  document.getElementById('btn-stop').disabled = false
+  start_interval()
+  draw_waveform()
+}
+
+function pause_playback() {
+  if(!playing) return
+  if(!paused) {
+    clearInterval(interval_id)
+    paused = true
+    document.getElementById('btn-pause').textContent = '▶ Resume'
+  } else {
+    start_interval()
+    paused = false
+    document.getElementById('btn-pause').textContent = '⏸ Pause'
+  }
+}
+
+function stop_playback() {
+  clearInterval(interval_id)
+  playing = false; paused = false
+  eq_index = 0
+  if(synth) synth.releaseAll()
+  cancelAnimationFrame(anim_id)
+  document.getElementById('btn-play').disabled = false
+  document.getElementById('btn-play').classList.remove('active')
+  document.getElementById('btn-pause').disabled = true
+  document.getElementById('btn-pause').textContent = '⏸ Pause'
+  document.getElementById('btn-stop').disabled = true
+  document.getElementById('progress-bar').style.width = '0%'
+  document.getElementById('eq-counter').textContent = '— / —'
+}
+
+// ── init ─────────────────────────────────────────────────────────────────────
+document.getElementById('btn-play').addEventListener('click', start_playback)
+document.getElementById('btn-pause').addEventListener('click', pause_playback)
+document.getElementById('btn-stop').addEventListener('click', stop_playback)
+
+document.getElementById('speed').addEventListener('input', function() {
+  document.getElementById('speed-val').textContent = this.value
+  if(playing && !paused) {
+    clearInterval(interval_id)
+    start_interval()
+  }
+})
+
+;(async () => {
+  document.getElementById('btn-play').textContent = '⏳ Loading…'
+  document.getElementById('btn-play').disabled = true
+  earthquakes = await load_data()
+  document.getElementById('btn-play').textContent = '▶ Play'
+  document.getElementById('btn-play').disabled = false
+  document.getElementById('eq-counter').textContent = `0 / ${earthquakes.length} events loaded`
+})()
+</script>
+</body>
+</html>
