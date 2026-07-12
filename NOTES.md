@@ -29,9 +29,11 @@ So for example, spotify API gives audio features like these
 
 We know for sure the data points 
 
+- `time` - as the base scale of progress
 - `lat / lng` - can be mapped to the panner 3D to identify the geolocation to give a sense of spatial quakes
 - `depth` - can be mapped to bass effect of the sound
 - `mag` - can be mapped to a note (lower notes for lesser values and higher notes for higher values)
+- `magType` - to differentiate (temporary)
 
 
 Apart from the above, we can take every instrument 
