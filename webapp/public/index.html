@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Earthquake Soundtrack</title>
+  <style>
+    body { font-family: -apple-system, sans-serif; background: #111; color: #eee; max-width: 720px; margin: 3rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.4rem; }
+    button { font-size: 1rem; padding: 0.6rem 1.4rem; border-radius: 6px; border: none; cursor: pointer; background: #de2d26; color: #fff; }
+    button:disabled { background: #555; }
+    #status { margin-top: 1rem; color: #aaa; min-height: 1.2em; }
+    #now { margin-top: 0.5rem; font-variant-numeric: tabular-nums; }
+    .mag { color: #fb6a4a; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <h1>Earthquake Soundtrack</h1>
+  <p>Each quake is a note: depth &rarr; pitch (deeper = lower), magnitude &rarr; loudness &amp; length, longitude &rarr; stereo pan.</p>
+  <button id="play">Play</button>
+  <button id="stop" disabled>Stop</button>
+  <div id="status">Loading data&hellip;</div>
+  <div id="now"></div>
+  <script src="/vendor/Tone.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

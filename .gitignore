@@ -1,4 +1,7 @@
-# *.csv
+*.csv
+*.json
+!package.json
+!package-lock.json
 *.ipynb*
 
 .DS_Store

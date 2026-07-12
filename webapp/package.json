@@ -1,0 +1,12 @@
+{
+  "name": "earthquake-soundtrack",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sonify earthquake data with Tone.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "tone": "15.5.22"
+  }
+}
